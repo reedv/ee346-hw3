@@ -91,8 +91,8 @@ pthread_mutex_t mutexsem;
 #endif
 
 #ifdef READER
-pthread_mutex_t mutexsem;
-pthread_mutex_t resource;
+pthread_mutex_t mutexsem;  // control reader access
+pthread_mutex_t resource;  // control writer access
 int readcount = 0;
 #endif
 
@@ -122,7 +122,7 @@ int main(int argc, char * argv[])
 	 * Load player stats
 	 */
 	pFile = fopen(argv[1],"r");
-	fscanf(pFile, "%d%", &numplayers);
+	fscanf(pFile, "%d", &numplayers);
 	for (i=0; i<numplayers; i++) {
 	   fscanf(pFile, "%s %d", cstring, &duration);
 	   player[i].ptype = cstring[0];
@@ -153,12 +153,14 @@ int main(int argc, char * argv[])
 	   threadarg[i].id = i;
 	   threadarg[i].duration = player[i].duration;
 	   pthread_attr_init(&attr[i]);
+
 	   if (player[i].ptype == 'R') {
 		  pthread_create(&threads[i],&attr[i],reader,(void *) &threadarg[i]);
 	   }
 	   else if (player[i].ptype == 'W') {
 		  pthread_create(&threads[i],&attr[i],writer,(void *) &threadarg[i]);
 	   }
+
 	   delay(1);
 	}
 
@@ -186,38 +188,52 @@ void * reader(void *arg)
 	printf("** Reader %d is created, time=%d\n", targ->id,time2);
 
 	#ifdef SEMAPHORE
+	// The mutex object referenced shall be locked by calling pthread_mutex_lock().
+	//   If the mutex is already locked, the calling thread shall block until the mutex becomes available.
 	pthread_mutex_lock (&mutexsem);
 	#endif
 
 #ifdef READER
-
-#endif
 	pthread_mutex_lock(&mutexsem);
 	/* ------ begin critical section */
-	readcount++; //Indicate that you are a reader trying to enter the Critical Section
-	if (readcount == 1) //Checks if you are the first reader trying to enter CS
-		pthread_mutex_lock(&resource); //If you are the first reader, lock the resource from writers.
-									   //Resource stays reserved for subsequent readers
+	readcount++;  // Indicate that you are a reader trying to enter the Critical Section
+	printf("** Reader %d: After inc. readcount = %d\n", targ->id, readcount);
+	if (readcount == 1){  // Checks if you are the first reader trying to enter CS
+		// If you are the first reader, lock the resource from writers.
+		// Resource stays reserved for subsequent readers
+		pthread_mutex_lock(&resource);
+		printf("LOCK: resource locked to writers by reader %d\n", targ->id);
+	}
 	/* ------ end critical section */
 	pthread_mutex_unlock(&mutexsem);
-s
+#endif
 
-	/* ------ begin critical section */
-
+	/* ------ begin critical section (SEMAPHORE case) */
 	printf("-> Reader %d enters critical section, duration=%d, time=%d\n",targ->id,targ->duration,time2);
-
 	delay(targ->duration);
-
 	printf("     <- Reader %d exits critical section, critical = %d, time=%d\n",targ->id, critical,time2);
-
 	/* ----- end critical section */
+
+#ifdef READER
+	pthread_mutex_lock(&mutexsem);
+	/* ------ begin critical section */
+	readcount--;  // Indicate that you are no longer needing the shared resource. One less readers
+	printf("** Reader %d: After dec. readcount = %d\n", targ->id, readcount);
+	if (readcount == 0){  // Checks if you are the last (only) reader who is reading the shared file
+		// If you are last reader, then you can unlock the resource.
+	    // This makes it available to writers.
+		pthread_mutex_unlock(&resource);
+		printf("UNLOCK: resource unlocked to writers by reader %d\n", targ->id);
+	}
+	/* ----- end critical section */
+	pthread_mutex_unlock(&mutexsem);
+#endif
 
 	#ifdef SEMAPHORE
 	pthread_mutex_unlock (&mutexsem);
 	#endif
 
 	pthread_exit(0);
-
 }
 
 /*
@@ -235,20 +251,26 @@ void * writer(void *argument)
 	pthread_mutex_lock (&mutexsem);
 	#endif
 
+#ifdef READER
+	int ret_val = pthread_mutex_lock(&resource);
+	printf("** Writer %d: pthread_mutex_lock: ret_val = %d\n", targ->id, ret_val);
+#endif
+
 	/* ------ begin critical section */
-
+	printf("** Writer %d: readcount = %d\n", targ->id, readcount);
 	printf("-> Writer %d enters critical section, duration=%d, time=%d\n",targ->id,targ->duration,time2);
-
 	critical++;
 	delay(targ->duration);
-
 	printf("     <- Writer %d exits critical section, critical = %d, time=%d\n",targ->id, critical,time2);
-
 	/* ----- end critical section */
 
 	#ifdef SEMAPHORE
 	pthread_mutex_unlock (&mutexsem);
 	#endif
+
+#ifdef READER
+	pthread_mutex_unlock(&resource);
+#endif
 
 	pthread_exit(0);
 }
