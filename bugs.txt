@@ -1,0 +1,1 @@
+For some reason, compilation seems to ignore -pthread directive on osx (works in linux, though)
