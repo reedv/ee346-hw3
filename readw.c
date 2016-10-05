@@ -91,9 +91,18 @@ pthread_mutex_t mutexsem;
 #endif
 
 #ifdef READER
-pthread_mutex_t mutexsem;  // control reader access
-pthread_mutex_t resource;  // control writer access
+pthread_mutex_t mutexsem,  // control reader access
+ 	 	 	    resource;  // control writer access
 int readcount = 0;
+#endif
+
+#ifdef WRITER
+int readcount = 0,
+	writecount = 0;
+pthread_mutex_t rmutex,
+				wmutex,
+				readTry,
+				resource;
 #endif
 
 int critical = 0;
