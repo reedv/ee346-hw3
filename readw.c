@@ -59,8 +59,8 @@
 
 // conditional compile directives
 //#define SEMAPHORE  // Flag to enable mutual exclusion
-#define READER  // Flag to enable reader priority
-//#define WRITER  // Flag to enable writer priority
+//#define READER  // Flag to enable reader priority
+#define WRITER  // Flag to enable writer priority
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -206,7 +206,6 @@ void * reader(void *arg)
 	pthread_mutex_lock(&mutexsem);
 	/* ------ begin critical section */
 	readcount++;  // Indicate that you are a reader trying to enter the Critical Section
-	printf("** Reader %d: After inc. readcount = %d\n", targ->id, readcount);
 	if (readcount == 1){  // Checks if you are the first reader trying to enter CS
 		// If you are the first reader, lock the resource from writers.
 		// Resource stays reserved for subsequent readers
@@ -217,17 +216,36 @@ void * reader(void *arg)
 	pthread_mutex_unlock(&mutexsem);
 #endif
 
-	/* ------ begin critical section (SEMAPHORE case) */
+#ifdef WRITER
+	/* ------ entry section */
+	pthread_mutex_lock(&readTry);  // indicate a reader is trying to enter
+	pthread_mutex_lock(&rmutex);  // lock entry section to avoid race with other readers
+
+	// report self as reader
+	readcount++;
+	// if this is first reader, lock the shared resource from writers
+	if(readcount == 1) {
+		pthread_mutex_lock(&resource);
+	}
+
+	pthread_mutex_unlock(&rmutex);  // release entry section to other readers
+	pthread_mutex_unlock(&readTry);  // indicate done trying to access readcount
+#endif
+
+	/* ------ begin critical section (SEMAPHORE and WRITER case) */
 	printf("-> Reader %d enters critical section, duration=%d, time=%d\n",targ->id,targ->duration,time2);
 	delay(targ->duration);
 	printf("     <- Reader %d exits critical section, critical = %d, time=%d\n",targ->id, critical,time2);
 	/* ----- end critical section */
 
+	#ifdef SEMAPHORE
+	pthread_mutex_unlock (&mutexsem);
+	#endif
+
 #ifdef READER
 	pthread_mutex_lock(&mutexsem);
 	/* ------ begin critical section */
 	readcount--;  // Indicate that you are no longer needing the shared resource. One less readers
-	printf("** Reader %d: After dec. readcount = %d\n", targ->id, readcount);
 	if (readcount == 0){  // Checks if you are the last (only) reader who is reading the shared file
 		// If you are last reader, then you can unlock the resource.
 	    // This makes it available to writers.
@@ -238,10 +256,19 @@ void * reader(void *arg)
 	pthread_mutex_unlock(&mutexsem);
 #endif
 
-	#ifdef SEMAPHORE
-	pthread_mutex_unlock (&mutexsem);
-	#endif
+#ifdef WRITER
+	/* ------ exit section */
+	pthread_mutex_lock(&rmutex);  // reserve exit section to avoid race with other readers
 
+	// indicate that this reader is leaving
+	readcount--;
+	// if this is last reader leaving, unlock the resource to writers
+	if(readcount == 0) {
+		pthread_mutex_unlock(&resource);
+	}
+
+	pthread_mutex_unlock(&rmutex);  // release exit section to other readers
+#endif
 	pthread_exit(0);
 }
 
@@ -261,12 +288,24 @@ void * writer(void *argument)
 	#endif
 
 #ifdef READER
-	int ret_val = pthread_mutex_lock(&resource);
-	printf("** Writer %d: pthread_mutex_lock: ret_val = %d\n", targ->id, ret_val);
+	pthread_mutex_lock(&resource);
+#endif
+
+#ifdef WRITER
+	pthread_mutex_lock(&wmutex);  // reserve entry section for writers to avoid race
+
+	writecount++;
+	if(writecount == 1){
+		pthread_mutex_lock(&readTry);
+	}
+
+	pthread_mutex_unlock(&wmutex);
+
+
+	pthread_mutex_lock(&resource);  // reserve resource for this writer only
 #endif
 
 	/* ------ begin critical section */
-	printf("** Writer %d: readcount = %d\n", targ->id, readcount);
 	printf("-> Writer %d enters critical section, duration=%d, time=%d\n",targ->id,targ->duration,time2);
 	critical++;
 	delay(targ->duration);
@@ -279,6 +318,22 @@ void * writer(void *argument)
 
 #ifdef READER
 	pthread_mutex_unlock(&resource);
+#endif
+
+#ifdef WRITER
+	pthread_mutex_unlock(&resource);  // release shared resource for other writers
+
+	/* ------ exit section */
+	pthread_mutex_lock(&wmutex);  // reserve exit section
+
+	// indicate this writer is leaving
+	writecount--;
+	// if this is last writer, unlock the shared resource to the readers
+	if(writecount == 0){
+		pthread_mutex_unlock(&readTry);
+	}
+
+	pthread_mutex_unlock(&wmutex);  // release exit section to other writers
 #endif
 
 	pthread_exit(0);
